@@ -2522,6 +2522,80 @@ that holds no memory, so a lane holds the draft's rings and window and a
 cached state the window alone, and `state.idle_gdn_cells` and
 `idle_cached_cells` stay 0.
 
+### DSpark draft context
+
+DSpark's greedy proposal scan supplies each token's full-vocabulary softmax
+probability to the verify budget. Its calibrated conditional chances multiply
+along the chain; a shorter verify step retains the previous estimates beyond
+its last proposal, scaled to the new prefix. Forced chains have no draft
+probability and do not train the acceptance fit.
+
+A DSpark draft (`inkling2_dspark`) has three layers: layers 0 and 2 attend to the
+last 1024 context positions, a ring as DFlash's, and layer 1 attends to every
+position the request has committed. That layer's K and V take 4,096 bytes a
+token in each lane (8 KV heads of 128 values of bf16, for each of K and V), so a
+lane's state is its fixed bytes plus 4,096 a token of the context it serves: 4
+GiB at the Inkling window of 1,048,576 tokens, in each of four lanes. The
+draft's global K/V is therefore sized by the memory plan, not by the window.
+
+- **Sizing** (`evaluateEngineMemoryPlan`). The plan charges a lane its fixed
+  bytes (`ModelMemoryPlan::laneStatePlannedAllocatedBytes`, which leaves the
+  global K/V out) and `draftContextTokenBytes` times the capacity of the context
+  it serves, `model::draftContextCapacity`: the context and the 15 scratch rows
+  a verify block writes past it, and at least one prefill chunk, 2,048, which
+  warmup writes. With `--max-context` the context served is the one asked for;
+  otherwise it is the most tokens whose lane leaves KV that holds them, found by
+  bisection, as a longer context charges each lane more and leaves the KV less.
+  The minimum a start needs holds a lane at warmup's 2,048. The status names the
+  capacity (`draft context per lane`, `draft_context.capacity_tokens` in the
+  JSON), and `context_bounds.draft` is the context it holds: the context bound is
+  `memory` where that is what limits it. The runtime sets the layout's capacity
+  once the plan holds the context, before any state is allocated
+  (`DSparkDraftLayout::contextCapacity`); a DFlash draft, whose lane keeps no
+  global K/V, charges nothing and is planned as before.
+- **Segments.** The global layer is not one buffer: it takes buffers of at most
+  65,536 rows (`SPLASH_DRAFT_GLOBAL_SEGMENT_TOKENS`, 128 MiB each of K and V), or
+  of the rows `maxBufferLength` holds where a device holds fewer, and the
+  kernels reach them by a table of their GPU addresses
+  (`ops::DraftSegmentedContext`, `dspark_block_attention_segmented`,
+  `dspark_context_store_segmented`, `dspark_commit_store_segmented`). A table
+  travels in `setBytes`, 4 KiB: at most 256 segments of each of K and V,
+  16,777,216 rows, which a window of 1,048,576 tokens does not reach. A row's
+  position p, counted from the request's global base, is row p % segment of
+  segment p / segment.
+- **Rewind.** Rows are stored by position, never in a ring, and only the rows a
+  cycle accepts are stored (`dspark_commit_store_segmented` writes as many rows
+  as its retained mask counts). The rows a cycle rejects are never written, and
+  a lane that rewinds, or reuses a lane another request left, keeps stale rows
+  past its length that attention never reads: it reads the `position - base`
+  rows from the base, and the next commit overwrites the stale ones. Nothing
+  is cleared. A suspended request's resume replays from position 0 on an idle
+  lane, so its base is 0 again unless a restore sets it.
+- **Restore.** A cached state keeps no global K/V: 4,096 bytes a token would be
+  1 GiB for a 262,144-token prefix, where it keeps the window, the draft's
+  context rows of the last 2,048 positions. A restore that continues the draft
+  state rebuilds the rings and the global layer from the window
+  (`Runtime::addDraftRebuild`), and the global layer then begins at the window's
+  start, `lengths.draftBase`; a restore that skips the draft state, as one
+  whose first boundary lies a window or more past it does
+  (`DraftContextPlan::restoresDraftState`), begins it at the restored
+  length, and the replay computes the rows from there (`dsparkGlobalBase`). A
+  DSpark replay captures every row it prefills, not only the last window
+  (`dsparkDraftContextPlan`), as the global layer needs them all.
+
+**What a restore costs.** The target verifies every token, so a restore
+changes no answer by itself; it changes how many proposals the target accepts.
+After a restore at position R, the draft's global layer attends to at most the
+last 2,048 positions before R, the window, where the same request prefilled
+whole attends to all of R, and after a restore that skipped the draft state to
+none of them. Positions after R are in the layer either way. The tokens a
+cycle accepts after a restore should therefore sit between those of a draft
+with no global context and those of a cold prefill, and recover only as the
+request's own tokens fill the layer; this has not been measured. Measure it
+with the same prompt cold and restored (`decode_profile` prints the tokens a
+cycle accepts), and treat a prompt whose key facts lie more than 2,048
+positions before the restore point as the worst case.
+
 ### Prefill and decode scheduling
 
 A decode cycle is one command in two parts
