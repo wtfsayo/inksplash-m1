@@ -1,5 +1,7 @@
 # inksplash-m1: Inkling 2 Mini on Splash for M1/M2 Macs
 
+![inksplash-m1: Inkling 2 Mini decodes 2.5× faster on an M1 Max: 74.6 tok/s against mlx-vlm 29.5 and llama.cpp 25.1](.github/banner.png)
+
 Thinking Machines' [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) on the
 [Splash](https://github.com/incoai/splash) inference engine, on Apple M1 and M2 GPUs, which upstream Splash
 does not run on. Inkling 2 Mini is a 26.4B mixture-of-experts model (3.4B active) whose middle 12 of 24 layers
