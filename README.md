@@ -32,6 +32,21 @@ The logits match MLX-VLM's (top-1 21/21 on the reference prompt, mean KL 0.0012)
 measured, what was tried and dropped, and the scripts to reproduce them are in
 [bench/inkling](bench/inkling/README.md).
 
+### From unsloth's GGUF
+
+It also loads [unsloth/Inkling-2-Mini-GGUF](https://huggingface.co/unsloth/Inkling-2-Mini-GGUF)
+(`UD-Q4_K_M`: NVFP4 experts, Q8_0 attention and head). Same Mac and draft, against
+[paperniuk/splash#86](https://github.com/paperniuk/splash/pull/86) on the same file:
+
+| | this fork | #86 |
+|---|---:|---:|
+| Decode, six realistic prompts (geometric mean) | **68.5 tok/s** | 57.1 tok/s |
+| Decode by prompt | code 88 · math 82 · tool call 82 · chat 44 · rewrite 84 · 7K-token document 47 tok/s | 75 · 74 · 63 · 38 · 67 · 40 |
+| Prompt processing, 8K tokens | 13.0 s | 16.1 s |
+
+Its larger Q8_0 attention and head make it 10-15% slower than the MLX 4-bit weights per decode step; logits
+against MLX-VLM: top-1 21/21, mean KL 0.013.
+
 ## Run it on an M1 or M2 Mac
 
 ### What you need
@@ -76,6 +91,16 @@ python3 bench/inkling/assemble.py ~/models/Inkling-2-Mini-MLX-4bit ~/models/inkl
 
 This makes `~/models/inkling-splash` out of links to the two downloads; it copies nothing. Leave out
 `--dflash2 ...` to use the release's DSpark draft instead (slower, see the results).
+
+**From the GGUF instead:** download the GGUF and only the config and tokenizer of the MLX release, then pass
+the GGUF with `--gguf` (the DFlash2 draft is required here):
+
+```bash
+hf download unsloth/Inkling-2-Mini-GGUF Inkling-2-Mini-UD-Q4_K_M.gguf --local-dir ~/models/Inkling-2-Mini-GGUF  # 16.6 GB
+hf download netprojects/Inkling-2-Mini-MLX-4bit --exclude "*.safetensors" --local-dir ~/models/Inkling-2-Mini-MLX-4bit
+python3 bench/inkling/assemble.py ~/models/Inkling-2-Mini-MLX-4bit ~/models/inkling-splash \
+    --dflash2 ~/models/Inkling-2-Mini-DFlash2 --gguf ~/models/Inkling-2-Mini-GGUF/Inkling-2-Mini-UD-Q4_K_M.gguf
+```
 
 ### 4. Start the server
 
