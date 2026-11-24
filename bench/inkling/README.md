@@ -1,39 +1,52 @@
 # Inkling 2 Mini on Splash (M1 Max)
 
 This branch runs Thinking Machines' [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini)
-with its own DSpark draft on the Apple7/8 port of Splash. Inkling 2 Mini is a 26.4B mixture-of-experts model
+on the Apple7/8 port of Splash, with either of two drafts. Inkling 2 Mini is a 26.4B mixture-of-experts model
 (3.4B active, 128 experts with 8 active). Its middle 12 of 24 layers run three times, so each token makes
 48 layer visits. The weights are [netprojects/Inkling-2-Mini-MLX-4bit](https://huggingface.co/netprojects/Inkling-2-Mini-MLX-4bit)
-(MLX affine 4-bit, Apache-2.0); the folder includes the DSpark drafter, `mtp.safetensors`.
+(MLX affine 4-bit, Apache-2.0).
+
+The drafts:
+- **DFlash2** (recommended): Inco's [incoai/Inkling-2-Mini-DFlash2](https://huggingface.co/incoai/Inkling-2-Mini-DFlash2),
+  which upstream Splash 1.7.2 serves on M3 and newer. This branch runs it on M1/M2 the way 1.7.2 does
+  (`assemble.py --dflash2`).
+- **DSpark**: the release's own drafter, `mtp.safetensors` in the netprojects folder.
 
 Everything here was measured on one machine: a Mac Studio with an M1 Max (32-core GPU, 32 GB), macOS 26.6,
 one request at a time. Nothing has been tuned or checked on other chips.
 
 ## Results
 
-All results are with the DSpark draft on, the runtime choosing how many draft tokens to verify each cycle.
+All results have the runtime choosing how many draft tokens to verify each cycle.
 
-**Decode, six realistic prompts** (`decode_bench.sh`, 512-token answers, context under 8K):
+**Decode, six realistic prompts** (`decode_bench.sh`, 512-token answers, context under 8K), tok/s with
+tokens accepted per cycle:
 
-| Prompt | Sampling | tok/s | Tokens per cycle |
+| Prompt | Sampling | DFlash2 | DSpark |
 |---|---|---:|---:|
-| code task | greedy | 62.3 | 3.15 |
-| math word problem | greedy | 67.6 | 3.56 |
-| tool call | T=1.0 | 64.6 | 3.52 |
-| multi-turn chat | T=1.0 | 41.8 | 1.75 |
-| rewrite a paragraph | greedy | 83.6 | 4.67 |
-| summarise a 7.2K-token document | greedy | 53.0 | 2.44 |
-| **geometric mean** | | **60.8** | |
+| code task | greedy | 76.2 (4.65) | 62.3 (3.15) |
+| math word problem | greedy | 77.1 (4.44) | 67.6 (3.56) |
+| tool call | T=1.0 | 71.4 (4.40) | 64.6 (3.52) |
+| multi-turn chat | T=1.0 | 42.9 (2.10) | 41.8 (1.75) |
+| rewrite a paragraph | greedy | 101.3 (7.50) | 83.6 (4.67) |
+| summarise a 7.2K-token document | greedy | 50.1 (2.83) | 53.0 (2.44) |
+| **geometric mean** | | **67.1** | **60.8** |
 
-Speed follows how many draft tokens the target accepts. Rewrites and tool calls copy text the draft predicts
-well; open-ended chat at temperature 1 accepts the fewest.
+Three runs with DFlash2 gave geometric means of 67.1, 68.0 and 71.2 tok/s, against 59.4-60.8 with DSpark: a
+prompt's speed moves with how many tokens a run accepts and with the rows the runtime chooses (math scored 77
+to 91). Rewrites and tool calls copy text the draft predicts well; open-ended chat at temperature 1 accepts
+the fewest. On the same prompts and weights, upstream Splash 1.7.2 accepts as many tokens per cycle with this
+draft (measured on an M4 Max, where 1.7.2 runs; it does not run on M1).
 
 **Coding agent.** pi 1.6.0, fully isolated (`agent/run_pi.py`): 8 tasks, each a sandbox of files with hidden
 tests. Across 8 runs, 62 of 64 tasks pass: six runs pass all 8, and two lose one task each. One loss was an
 ambiguous rename; in the other, the model's reasoning repeated one line until pi's 16,384-token cap. pi sends
-no temperature, so `serve.py` decodes greedily; the model's own default is temperature 1.0. In a run passing
-8 of 8 (100 s of task time), decode runs at 79 tok/s (4.4 tokens a cycle), and the 30 requests process 11,050
-prompt tokens in 23.2 s; follow-up requests take 0.72 s on average.
+no temperature, so `serve.py` decodes greedily; the model's own default is temperature 1.0. Those runs used
+DSpark; a run with DFlash2 passes 8 of 8 and decodes at 81.5 tok/s (5.2 tokens a cycle), against 79 tok/s
+(4.4 a cycle) with DSpark. The runtime verifies more rows a cycle for the better draft, so its cycles take 63
+ms rather than 56 and the gain in a session is smaller than in tokens a cycle. In a DSpark run passing 8 of 8
+(100 s of task time), the 30 requests process 11,050 prompt tokens in 23.2 s; follow-up requests take 0.72 s
+on average.
 
 Two engine changes on this branch do most of that prompt-side work:
 - The shared system prompt and tool list (~1.4K tokens) are cached across sessions: a new session's first
@@ -50,7 +63,8 @@ Two engine changes on this branch do most of that prompt-side work:
 | 633 | 1.10 s | 575 |
 | 7,234 | 12.3 s | 587 |
 
-**Long context** (`deep_serve.sh`: a fresh server per depth, one code-writing request, 512-token answer):
+**Long context** (`deep_serve.sh`: a fresh server per depth, one code-writing request, 512-token answer;
+measured with DSpark):
 
 | Context | Prompt processing | Decode tok/s | Tokens per cycle |
 |---:|---:|---:|---:|
@@ -70,7 +84,8 @@ tokens; the disagreements are near-ties (top-2 margin under 0.4).
 
 ## Where a decode cycle goes
 
-This is a 6-row verify (the agent's typical cycle, 4.4 tokens) at 2K context, 58 ms on the GPU:
+This is a 6-row verify with DSpark (the agent's typical cycle, 4.4 tokens) at 2K context, 58 ms on the GPU.
+With DFlash2 the same cycle takes 56.7 ms: its draft costs about as much as DSpark's.
 
 | Part | ms |
 |---|---:|
@@ -103,9 +118,12 @@ Each of these was measured and dropped:
 On an Apple Silicon Mac with about 24 GB free:
 
 ```bash
-# 1. Weights, and a Splash model folder that links to them (no copies)
+# 1. Weights, the DFlash2 draft, and a Splash model folder that links to them (no copies);
+#    leave out --dflash2 to use the release's DSpark draft
 hf download netprojects/Inkling-2-Mini-MLX-4bit --local-dir ~/models/Inkling-2-Mini-MLX-4bit
-python3 bench/inkling/assemble.py ~/models/Inkling-2-Mini-MLX-4bit ~/models/inkling-splash
+hf download incoai/Inkling-2-Mini-DFlash2 --local-dir ~/models/Inkling-2-Mini-DFlash2
+python3 bench/inkling/assemble.py ~/models/Inkling-2-Mini-MLX-4bit ~/models/inkling-splash \
+    --dflash2 ~/models/Inkling-2-Mini-DFlash2
 
 # 2. Build (from the repository root)
 make -j all

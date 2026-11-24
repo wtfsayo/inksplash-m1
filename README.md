@@ -1,7 +1,7 @@
-> **This branch (`inkling2`): Inkling 2 Mini on M1/M2.** It adds Thinking Machines' Inkling 2 Mini with its
-> DSpark draft to the M1/M2 port described below: about 61 tok/s decode on an M1 Max. Setup, benchmarks
-> and results are in [bench/inkling](bench/inkling/README.md). Unofficial, and part of neither Splash nor
-> the port.
+> **This branch (`inkling2`): Inkling 2 Mini on M1/M2.** It adds Thinking Machines' Inkling 2 Mini to the
+> M1/M2 port described below, with Inco's DFlash2 draft or the release's DSpark draft: about 67-71 tok/s
+> decode on an M1 Max with DFlash2. Setup, benchmarks and results are in
+> [bench/inkling](bench/inkling/README.md). Unofficial, and part of neither Splash nor the port.
 
 > **Unofficial fork: Splash on M1/M2 Macs.**
 > Splash is built by [Inco](https://github.com/incoai/splash): the engine, the models and the draft
