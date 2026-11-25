@@ -1035,7 +1035,7 @@ int main(int argc, char **argv) {
         if (logitsWidth > model::ExecutionLimits::maximumBatchWidth)
           throw std::invalid_argument("--logits-width exceeds the batch width");
       } else if (option == "--logits-tokens") {
-        logitsTokens = parseSamples(argv[index + 1]);
+        logitsTokens = static_cast<uint32_t>(std::stoul(argv[index + 1]));
         logitsOptions = true;
       } else if (option == "--logits-cache") {
         const std::string_view value(argv[index + 1]);
