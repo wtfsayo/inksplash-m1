@@ -945,7 +945,7 @@ int main(int argc, char **argv) {
                    "[--scenario NAME[,NAME...]] [--ane-ffn-share SHARE "
                    "[--ane-ffn-minimum-rows ROWS]] [--ane-calibration again] [--max-context TOKENS] "
                    "[--activations auto|bf16] [--verify-rows all|auto] "
-                   "[--logits DIR [--logits-from DIR] [--logits-width LANES] [--logits-cache evict|keep]] "
+                   "[--logits DIR [--logits-from DIR] [--logits-width LANES] [--logits-tokens N] [--logits-cache evict|keep]] "
                    "[--context-lengths TOKENS[,TOKENS...]] [--short-idle SECONDS]\n"
                    "  NAME: decode, partial, short, transcripts, context, exact, logits or resume "
                    "(default: decode,partial,context)\n"
@@ -988,6 +988,9 @@ int main(int argc, char **argv) {
     model::VerifyRows verifyRows = model::VerifyRows::All;
     std::optional<std::filesystem::path> logitsDirectory, logitsFrom;
     uint32_t logitsWidth = 1;
+    // The tokens a logits row scores, from 0: the model's vocabulary by default; fewer leave out a head's padding
+    // rows, which its logit finish writes as -inf (a score request takes finite logits alone).
+    uint32_t logitsTokens = 0;
     bool logitsKeepCache = false;
     bool logitsOptions = false;
     for (int index = 3; index < argc; index += 2) {
@@ -1031,6 +1034,9 @@ int main(int argc, char **argv) {
         logitsOptions = true;
         if (logitsWidth > model::ExecutionLimits::maximumBatchWidth)
           throw std::invalid_argument("--logits-width exceeds the batch width");
+      } else if (option == "--logits-tokens") {
+        logitsTokens = parseSamples(argv[index + 1]);
+        logitsOptions = true;
       } else if (option == "--logits-cache") {
         const std::string_view value(argv[index + 1]);
         if (value != "evict" && value != "keep")
@@ -1549,7 +1555,8 @@ int main(int argc, char **argv) {
       }
       std::filesystem::create_directories(*logitsDirectory);
       writeLogitDump(*logitsDirectory, dump);
-      std::vector<uint32_t> vocabulary(capabilities.vocabularySize);
+      std::vector<uint32_t> vocabulary(logitsTokens ? std::min(logitsTokens, capabilities.vocabularySize)
+                                                    : capabilities.vocabularySize);
       std::iota(vocabulary.begin(), vocabulary.end(), 0u);
       std::ofstream logits(*logitsDirectory / "logits.f32", std::ios::binary | std::ios::trunc);
       for (size_t first = 0; first < dump.records.size(); first += logitsWidth) {
